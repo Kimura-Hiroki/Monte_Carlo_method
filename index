@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>モンテカルロ法（円周率の推定）</title>
+  <style>
+    :root{
+      --bg:#fafcff; --panel:#ffffff; --ink:#1f2a44; --muted:#6b7a99; --line:#e6eef8; --brand:#2f80ed; --ok:#16a34a; --ng:#e11d48;
+    }
+    *{box-sizing:border-box}
+    body{margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans JP", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; color:var(--ink); background:var(--bg)}
+    .wrap{max-width:1000px; margin:0 auto; padding:20px}
+    header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
+    h1{font-size:clamp(20px,4vw,28px); margin:0; color:var(--brand)}
+    .sub{color:var(--muted)}
+
+    .grid{display:grid; grid-template-columns: 1fr 320px; gap:16px; margin-top:12px}
+    @media (max-width: 860px){ .grid{grid-template-columns:1fr} }
+
+    .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 6px 16px rgba(31,42,68,0.06)}
+    .card .hd{padding:12px 14px; border-bottom:1px solid var(--line); font-weight:600; color:var(--muted)}
+    .card .bd{padding:14px}
+
+    canvas{width:100%; height:auto; display:block; background:#fff; border-bottom-left-radius:14px; border-bottom-right-radius:14px;}
+    .legend{display:flex; gap:12px; align-items:center; color:var(--muted); font-size:13px}
+    .dot{width:10px; height:10px; border-radius:50%; display:inline-block}
+
+    .controls{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+    button, input, select{font:inherit}
+    button{padding:10px 12px; border-radius:10px; border:1px solid var(--line); cursor:pointer; background:#f4f8ff}
+    button:hover{filter:brightness(0.98)}
+    .primary{background:linear-gradient(#2f80ed,#2267c9); color:#fff; border-color:#1c57ab}
+    .danger{background:#fde7eb; border-color:#f6b6c4; color:#b11e3a}
+    .full{grid-column: 1 / -1}
+
+    .row{display:flex; align-items:center; gap:10px}
+    .mini{font-size:12px; color:var(--muted)}
+    .kpi{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px}
+    .kpi .item{border:1px solid var(--line); border-radius:10px; padding:10px}
+    .kpi .lbl{font-size:12px; color:var(--muted)}
+    .kpi .val{font-variant-numeric:tabular-nums; font-size:18px}
+
+    .formula{background:#f7fbff; border:1px dashed #cfe3ff; border-radius:10px; padding:10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
+    code{background:#eef5ff; padding:2px 4px; border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>モンテカルロ法による円周率の推定</h1>
+      <div class="sub">ランダムに点を打つ「的当て」から <code>π ≈ 4×(円内点数/全点数)</code> を体感しよう</div>
+    </header>
+
+    <div class="grid" role="region" aria-label="デモ領域">
+      <!-- 可視化 -->
+      <section class="card">
+        <div class="hd">可視化（単位正方形と内接円）</div>
+        <div class="bd" style="padding-bottom:0">
+          <div class="legend" aria-hidden="true" style="margin-bottom:8px">
+            <span class="dot" style="background:#16a34a"></span> 円の内側
+            <span class="dot" style="background:#e11d48"></span> 円の外側
+          </div>
+          <canvas id="plot" width="520" height="520" aria-label="モンテカルロ可視化キャンバス"></canvas>
+        </div>
+      </section>
+
+      <!-- コントロール -->
+      <aside class="card" aria-labelledby="ctl">
+        <div class="hd" id="ctl">操作と結果</div>
+        <div class="bd">
+          <div class="controls">
+            <button id="btnToggle" class="primary">▶ スタート</button>
+            <button id="btnStep">➕ 1ステップ</button>
+            <button id="btnReset" class="danger full">🗑 リセット</button>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <label class="mini" for="spd">1ステップの点数: <span id="spdVal">200</span></label>
+            <input id="spd" type="range" min="10" max="2000" value="200" style="flex:1" />
+          </div>
+
+          <div class="kpi" style="margin-top:12px" aria-live="polite">
+            <div class="item"><div class="lbl">総点数 n</div><div class="val" id="statN">0</div></div>
+            <div class="item"><div class="lbl">円内点 in</div><div class="val" id="statIn">0</div></div>
+            <div class="item"><div class="lbl">比率 in/n</div><div class="val" id="statRatio">—</div></div>
+            <div class="item"><div class="lbl">推定 π̂</div><div class="val" id="statPi">—</div></div>
+          </div>
+
+          <div class="formula" style="margin-top:12px" aria-live="polite">
+            π ≈ 4 × (in / n) = 4 × (<span id="fIn">0</span> / <span id="fN">0</span>) = <span id="fPi">—</span>
+          </div>
+
+          <p class="mini" style="margin-top:10px">
+            しくみ: 面積1の正方形に半径0.5の円（面積 <code>π×0.5²=π/4</code>）を描く。点を一様ランダムに打つと、
+            <code>円内/全体 ≈ 面積の比 = π/4</code> となるため、<code>π ≈ 4×(円内/全体)</code>。
+          </p>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    // ====== 基本描画 ======
+    const canvas = document.getElementById('plot');
+    const ctx = canvas.getContext('2d');
+    const DPR = Math.max(1, window.devicePixelRatio||1);
+
+    function drawBase(){
+      const m = Math.min(canvas.width, canvas.height);
+      ctx.clearRect(0,0,canvas.width, canvas.height);
+      // 外枠
+      ctx.strokeStyle = '#cfd9ea';
+      ctx.lineWidth = 2 * DPR;
+      ctx.strokeRect(0.5*DPR, 0.5*DPR, m-1*DPR, m-1*DPR);
+      // 円（中心(0.5,0.5), 半径0.5）
+      ctx.beginPath();
+      ctx.arc(m/2, m/2, m/2, 0, Math.PI*2);
+      ctx.strokeStyle = '#2f80ed';
+      ctx.lineWidth = 3 * DPR;
+      ctx.stroke();
+    }
+
+    // ====== 状態 ======
+    let running = false;
+    let n = 0, inside = 0;
+    let pointsPerStep = 200;
+    const colorIn = '#16a34a';
+    const colorOut = '#e11d48';
+
+    // ====== 要素参照 ======
+    const btnToggle = document.getElementById('btnToggle');
+    const btnStep = document.getElementById('btnStep');
+    const btnReset = document.getElementById('btnReset');
+    const spd = document.getElementById('spd');
+    const spdVal = document.getElementById('spdVal');
+
+    const statN = document.getElementById('statN');
+    const statIn = document.getElementById('statIn');
+    const statRatio = document.getElementById('statRatio');
+    const statPi = document.getElementById('statPi');
+
+    const fIn = document.getElementById('fIn');
+    const fN = document.getElementById('fN');
+    const fPi = document.getElementById('fPi');
+
+    function updateStats(){
+      statN.textContent = n.toLocaleString();
+      statIn.textContent = inside.toLocaleString();
+      if(n>0){
+        const ratio = inside/n;
+        const pi = 4*ratio;
+        statRatio.textContent = ratio.toFixed(6);
+        statPi.textContent = pi.toFixed(6);
+        fIn.textContent = inside.toLocaleString();
+        fN.textContent = n.toLocaleString();
+        fPi.textContent = pi.toFixed(6);
+      }else{
+        statRatio.textContent = '—';
+        statPi.textContent = '—';
+        fIn.textContent = 0; fN.textContent = 0; fPi.textContent = '—';
+      }
+    }
+
+    function throwPoints(k){
+      const m = Math.min(canvas.width, canvas.height);
+      const r = Math.max(1, Math.round(2*DPR));
+      for(let i=0;i<k;i++){
+        const x = Math.random();
+        const y = Math.random();
+        const dx = x-0.5, dy = y-0.5;
+        const isIn = (dx*dx+dy*dy <= 0.25);
+        const px = x*m, py = (1-y)*m; // y上向き
+        ctx.beginPath(); ctx.fillStyle = isIn ? colorIn : colorOut; ctx.arc(px, py, r, 0, Math.PI*2); ctx.fill();
+        n++; if(isIn) inside++;
+      }
+      updateStats();
+    }
+
+    function step(){
+      throwPoints(pointsPerStep);
+    }
+
+    let rafId=null;
+    function loop(){
+      if(!running) return; step(); rafId = requestAnimationFrame(loop);
+    }
+
+    // ====== イベント ======
+    btnToggle.addEventListener('click', ()=>{
+      running = !running;
+      btnToggle.textContent = running ? '⏸ 一時停止' : '▶ スタート';
+      btnToggle.classList.toggle('primary', !running);
+      if(running) loop(); else if(rafId) cancelAnimationFrame(rafId);
+    });
+
+    btnStep.addEventListener('click', ()=>{ running=false; btnToggle.textContent='▶ スタート'; if(rafId) cancelAnimationFrame(rafId); step(); });
+
+    btnReset.addEventListener('click', ()=>{
+      running=false; if(rafId) cancelAnimationFrame(rafId);
+      n=0; inside=0; updateStats(); drawBase(); btnToggle.textContent='▶ スタート';
+    });
+
+    spd.addEventListener('input', (e)=>{ pointsPerStep = parseInt(e.target.value,10)||10; spdVal.textContent = pointsPerStep; });
+
+    // 初期化
+    drawBase(); updateStats();
+  </script>
+</body>
+</html>
